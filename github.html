@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Repository Counter</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .container {
+            background-color: #f6f8fa;
+            border-radius: 6px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        .radio-group {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .radio-option {
+            display: flex;
+            align-items: center;
+        }
+        button {
+            background-color: #2ea44f;
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #2c974b;
+        }
+        button:disabled {
+            background-color: #94d3a2;
+            cursor: not-allowed;
+        }
+        #result {
+            margin-top: 20px;
+        }
+        .repo-count {
+            font-size: 24px;
+            font-weight: bold;
+            color: #0366d6;
+        }
+        .error {
+            color: #cb2431;
+            border-left: 4px solid #cb2431;
+            padding-left: 15px;
+            margin: 15px 0;
+        }
+        .loading {
+            text-align: center;
+            font-style: italic;
+            color: #666;
+        }
+        .repo-info {
+            margin-top: 15px;
+        }
+        .note {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #fffbdd;
+            border-left: 4px solid #dbab09;
+            color: #24292e;
+        }
+    </style>
+</head>
+<body>
+    <h1>GitHub Repository Counter</h1>
+    
+    <div class="container">
+        <div class="form-group">
+            <label for="github-name">GitHub Username or Organization:</label>
+            <input type="text" id="github-name" placeholder="e.g., octocat, microsoft">
+        </div>
+        
+        <div class="form-group">
+            <label>Account Type:</label>
+            <div class="radio-group">
+                <div class="radio-option">
+                    <input type="radio" id="user" name="accountType" value="users" checked>
+                    <label for="user">User</label>
+                </div>
+                <div class="radio-option">
+                    <input type="radio" id="org" name="accountType" value="orgs">
+                    <label for="org">Organization</label>
+                </div>
+            </div>
+        </div>
+        
+        <button id="fetch-btn">Fetch Repositories</button>
+        
+        <div id="result"></div>
+
+        <div class="note">
+            <p><strong>Note:</strong> This application uses a CORS proxy to access the GitHub API. For production use, you should implement a proper backend solution.</p>
+            <p>GitHub API has a rate limit of 60 requests per hour for unauthenticated requests.</p>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const fetchBtn = document.getElementById('fetch-btn');
+            const resultDiv = document.getElementById('result');
+            const githubNameInput = document.getElementById('github-name');
+            
+            fetchBtn.addEventListener('click', fetchRepositories);
+            githubNameInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    fetchRepositories();
+                }
+            });
+            
+            async function fetchRepositories() {
+                const githubName = githubNameInput.value.trim();
+                if (!githubName) {
+                    showError('Please enter a GitHub username or organization name.');
+                    return;
+                }
+                
+                // Disable button during fetch
+                fetchBtn.disabled = true;
+                
+                const accountType = document.querySelector('input[name="accountType"]:checked').value;
+                resultDiv.innerHTML = '<div class="loading">Loading repository data...</div>';
+                
+                try {
+                    // Use a CORS proxy to bypass CORS restrictions
+                    // In production, you should use your own backend or GitHub OAuth token
+                    const corsProxy = 'https://api.allorigins.win/raw?url=';
+                    const githubAPI = 'https://api.github.com';
+                    
+                    // First, check if account exists
+                    const accountUrl = `${corsProxy}${encodeURIComponent(`${githubAPI}/${accountType}/${githubName}`)}`;
+                    const accountResponse = await fetch(accountUrl);
+                    
+                    if (!accountResponse.ok) {
+                        throw new Error(`GitHub ${accountType === 'users' ? 'user' : 'organization'} not found or API rate limit exceeded.`);
+                    }
+                    
+                    const accountData = await accountResponse.json();
+                    
+                    if (accountType === 'users') {
+                        // For users, we can directly get the public repo count
+                        displayResult(githubName, accountData.public_repos, accountType, accountData.avatar_url);
+                    } else {
+                        // For organizations, public_repos might not be available directly
+                        // Let's make another call to get repositories count
+                        const reposUrl = `${corsProxy}${encodeURIComponent(`${githubAPI}/orgs/${githubName}/repos?per_page=1`)}`;
+                        const repoResponse = await fetch(reposUrl);
+                        
+                        if (!repoResponse.ok) {
+                            throw new Error('Failed to fetch repositories.');
+                        }
+                        
+                        // Check if we can get public_repos from organization data
+                        if (accountData.public_repos !== undefined) {
+                            displayResult(githubName, accountData.public_repos, accountType, accountData.avatar_url);
+                        } else {
+                            // Otherwise, try to estimate from the response
+                            const repos = await repoResponse.json();
+                            displayResult(githubName, repos.length, accountType, accountData.avatar_url);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Fetch error:', error);
+                    showError(`Error: ${error.message}`);
+                } finally {
+                    // Re-enable button
+                    fetchBtn.disabled = false;
+                }
+            }
+            
+            function displayResult(name, repoCount, type, avatarUrl) {
+                const typeLabel = type === 'users' ? 'User' : 'Organization';
+                
+                resultDiv.innerHTML = `
+                    <div class="repo-info">
+                        <img src="${avatarUrl}" alt="${name}" width="50" height="50" style="border-radius: 50%; margin-right: 10px;">
+                        <p>GitHub ${typeLabel}: <strong>${name}</strong></p>
+                        <p>Public Repositories: <span class="repo-count">${repoCount}</span></p>
+                        <p><a href="https://github.com/${name}" target="_blank">View Profile</a></p>
+                    </div>
+                `;
+            }
+            
+            function showError(message) {
+                resultDiv.innerHTML = `<div class="error">${message}</div>`;
+            }
+        });
+    </script>
+</body>
+</html>
